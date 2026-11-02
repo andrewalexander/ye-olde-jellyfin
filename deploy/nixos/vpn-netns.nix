@@ -81,6 +81,16 @@ in
       type = types.str;
       description = "Where Transmission saves files.";
     };
+    transmissionCredentialsFile = mkOption {
+      type = types.nullOr types.str;
+      default = null;
+      example = "/var/lib/secrets/transmission.json";
+      description = ''
+        Root-only JSON file with `rpc-username` and `rpc-password`, which turns on
+        Transmission's password. Without it, anything that can reach the web UI
+        can control Transmission.
+      '';
+    };
     downloadGroup = mkOption {
       type = types.str;
       default = "media";
@@ -153,11 +163,13 @@ in
       openFirewall = false; # the peer port is inside the namespace anyway
       # Group-writable, and new files keep the group, so its members can read them.
       downloadDirPermissions = "2775";
+      credentialsFile = lib.mkIf (cfg.transmissionCredentialsFile != null) cfg.transmissionCredentialsFile;
       settings = {
         download-dir = cfg.downloadDir;
         incomplete-dir-enabled = false;
         umask = "002";
         rpc-bind-address = nsSide;
+        rpc-authentication-required = cfg.transmissionCredentialsFile != null;
         rpc-whitelist-enabled = true;
         rpc-whitelist = "127.0.0.1,${hostSide}";
         rpc-host-whitelist-enabled = false; # only reachable through the veth

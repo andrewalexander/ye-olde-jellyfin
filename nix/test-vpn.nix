@@ -53,6 +53,10 @@ in
       endpoint = "${exitReal}:51820";
       privateKeyFile = toString (pkgs.writeText "server.key" keys.peer1.privateKey);
       downloadDir = "/mnt/media/Downloads";
+      transmissionCredentialsFile = toString (pkgs.writeText "transmission.json" (builtins.toJSON {
+        rpc-username = "tester";
+        rpc-password = "test-password";
+      }));
     };
     fileSystems."/mnt/media" = { device = "tmpfs"; fsType = "tmpfs"; };
     environment.systemPackages = [ pkgs.curl pkgs.iproute2 pkgs.nftables pkgs.util-linux pkgs.wireguard-tools ];
@@ -102,7 +106,12 @@ in
             exit.wait_until_succeeds(f"journalctl -u dnsmasq | grep -q 'query.*{unit}.probe.example'")
 
     with subtest("the web UIs answer from the host"):
-        server.wait_until_succeeds("curl -sS --max-time 5 -o /dev/null -w '%{http_code}' http://10.200.0.2:9091/transmission/rpc | grep -q 409", timeout=120)
+        # 401 without the password, and 409 (a normal session handshake) with it.
+        server.wait_until_succeeds("curl -sS --max-time 5 -o /dev/null -w '%{http_code}' http://10.200.0.2:9091/transmission/rpc | grep -q 401", timeout=120)
+        out = server.succeed("curl -sS --max-time 5 -o /dev/null -w '%{http_code}' -u tester:test-password http://10.200.0.2:9091/transmission/rpc")
+        assert out == "409", out
+        out = server.succeed("curl -sS --max-time 5 -o /dev/null -w '%{http_code}' -u tester:wrong http://10.200.0.2:9091/transmission/rpc")
+        assert out == "401", out
         server.wait_until_succeeds("curl -sS --max-time 5 -o /dev/null http://10.200.0.2:9117/", timeout=240)
 
     with subtest("downloads land on the drive, group-writable"):

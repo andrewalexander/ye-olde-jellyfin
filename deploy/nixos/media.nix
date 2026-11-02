@@ -21,13 +21,12 @@ let
 
   strings = l: concatMapStrings (s: "<string>${s}</string>") l;
 
-  # Jellyfin ignores a subnet entry unless this host has an interface in that
-  # subnet, so entries can't cover clients on another VLAN. "all" can. With a
-  # domain, LAN clients on other VLANs need the name or the address by hand.
+  # Jellyfin doesn't know Caddy is in front of it, so it would report its own
+  # port. By-request makes HTTP clients get back the address they used, whether
+  # that's the LAN one or the domain. Discovery has no request to copy, so it gets
+  # this entry. It can only come from the LAN, and "all" works from any VLAN:
+  # Jellyfin ignores a subnet entry unless this host has an interface in it.
   lanUri = "http://${cfg.serverAddress}:8096";
-  publishedUris =
-    if cfg.domain == null then [ "all=${lanUri}" ]
-    else map (lan: "${lan}=${lanUri}") cfg.lans ++ [ "external=https://${cfg.domain}" ];
 
   networkXml = pkgs.writeText "jellyfin-network.xml" ''
     <?xml version="1.0" encoding="utf-8"?>
@@ -48,8 +47,8 @@ let
       <KnownProxies><string>127.0.0.1</string></KnownProxies>
       <IgnoreVirtualInterfaces>true</IgnoreVirtualInterfaces>
       <VirtualInterfaceNames><string>veth</string></VirtualInterfaceNames>
-      <EnablePublishedServerUriByRequest>false</EnablePublishedServerUriByRequest>
-      <PublishedServerUriBySubnet>${strings publishedUris}</PublishedServerUriBySubnet>
+      <EnablePublishedServerUriByRequest>true</EnablePublishedServerUriByRequest>
+      <PublishedServerUriBySubnet>${strings [ "all=${lanUri}" ]}</PublishedServerUriBySubnet>
       <RemoteIPFilter />
       <IsRemoteIPFilterBlacklist>false</IsRemoteIPFilterBlacklist>
     </NetworkConfiguration>
@@ -112,6 +111,22 @@ in
       example = "192.168.1.10";
       description = "This host's LAN address, which Jellyfin hands out through discovery.";
     };
+    jellyfinDeny = mkOption {
+      type = types.listOf types.str;
+      default = [ "${vpnUIs}/30" ];
+      defaultText = lib.literalExpression ''[ "10.200.0.2/30" ]'';
+      description = ''
+        Addresses Jellyfin itself can't reach, to limit what a compromised public
+        service can touch. Defaults to the Transmission and Jackett network. Caddy
+        still reaches those UIs, because it's a separate service.
+      '';
+    };
+    loginBanExempt = mkOption {
+      type = types.listOf types.str;
+      default = cfg.lans;
+      defaultText = lib.literalExpression "config.services.mediaStack.lans";
+      description = "Networks that fail2ban never bans, so a mistyped password at home can't lock you out.";
+    };
     domain = mkOption {
       type = types.nullOr types.str;
       default = null;
@@ -133,7 +148,10 @@ in
     users.groups.media = { };
     users.users.${config.services.jellyfin.user}.extraGroups = [ "media" ];
     # Runs as root, so it can also take back data left by a previous user.
-    systemd.services.jellyfin.serviceConfig.ExecStartPre = [ "+${jellyfinSetup}" ];
+    systemd.services.jellyfin.serviceConfig = {
+      ExecStartPre = [ "+${jellyfinSetup}" ];
+      IPAddressDeny = cfg.jellyfinDeny;
+    };
 
     services.caddy = {
       enable = true;
@@ -167,12 +185,36 @@ in
 
     services.dnscount.caddyLog.enable = true;
 
+    # Jellyfin's lockout disables the account, which lets a stranger lock you out
+    # on purpose. This blocks the guesser instead, sooner than that lockout. The
+    # IP in Jellyfin's log is the real visitor because Caddy is a known proxy.
+    #
+    # With an HTTP-proxy VPS in front, the firewall here only sees the VPS, so a
+    # ban would block everyone: move the ban to the VPS.
+    services.fail2ban = {
+      enable = true;
+      ignoreIP = cfg.loginBanExempt;
+      jails.jellyfin = {
+        filter.Definition.failregex = "Authentication request for .* has been denied \\(IP: <HOST>\\)";
+        settings = {
+          journalmatch = "_SYSTEMD_UNIT=jellyfin.service";
+          port = "80,443,8096";
+          maxretry = 5;
+          findtime = "10m";
+          bantime = "1h";
+        };
+      };
+    };
+
     networking.firewall =
       let
         ports = concatStringsSep "," (map toString lanPorts);
         nftPorts = concatStringsSep ", " (map toString lanPorts);
       in
       {
+        # 443 is the public site. 80 only does Caddy's redirect to HTTPS and its
+        # Let's Encrypt HTTP check. The router forwards 443 alone, so 80 is only
+        # reachable from the LAN, and certificates are issued over 443.
         allowedTCPPorts = lib.optionals (cfg.domain != null) [ 80 443 ];
       }
       // (if config.networking.nftables.enable then {
