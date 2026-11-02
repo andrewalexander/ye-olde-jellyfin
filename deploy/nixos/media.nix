@@ -55,6 +55,19 @@ let
     </NetworkConfiguration>
   '';
 
+  jellyfinSetup =
+    let
+      jf = config.services.jellyfin;
+      dirs = "${jf.dataDir} ${jf.cacheDir} ${jf.configDir} ${jf.logDir}";
+    in
+    pkgs.writeShellScript "jellyfin-setup" ''
+      if [ -n "$(${pkgs.findutils}/bin/find ${dirs} \( ! -user ${jf.user} -o ! -group ${jf.group} \) -print -quit)" ]; then
+        echo "taking ownership of Jellyfin's data for ${jf.user}"
+        ${pkgs.coreutils}/bin/chown -R ${jf.user}:${jf.group} ${dirs}
+      fi
+      ${pkgs.coreutils}/bin/install -m 0640 -o ${jf.user} -g ${jf.group} ${networkXml} ${jf.configDir}/network.xml
+    '';
+
   # The access log dnscount-caddy-log tails (the inside of Caddy's `log {}`;
   # it replaces the module's default per-site log). Jellyfin clients put
   # credentials in URLs and headers; strip them before they reach disk.
@@ -116,9 +129,11 @@ in
       enable = true;
       openFirewall = false; # the firewall rules below open only what's needed
     };
-    systemd.services.jellyfin.preStart = ''
-      install -m 0640 ${networkXml} ${config.services.jellyfin.configDir}/network.xml
-    '';
+    # The library is shared through this group (see docs/homelab.md).
+    users.groups.media = { };
+    users.users.${config.services.jellyfin.user}.extraGroups = [ "media" ];
+    # Runs as root, so it can also take back data left by a previous user.
+    systemd.services.jellyfin.serviceConfig.ExecStartPre = [ "+${jellyfinSetup}" ];
 
     services.caddy = {
       enable = true;

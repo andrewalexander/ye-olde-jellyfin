@@ -40,7 +40,7 @@ in
       lans = [ "${client}/32" ];
       serverAddress = server;
     };
-    environment.systemPackages = [ pkgs.curl pkgs.iproute2 ];
+    environment.systemPackages = [ pkgs.curl pkgs.iproute2 pkgs.procps pkgs.util-linux pkgs.shadow ];
   };
 
   testScript = ''
@@ -84,9 +84,31 @@ in
         out = server.succeed("curl -fsS 'http://127.0.0.1:8081/api/hits?limit=500'")
         assert "sekrit" not in out, out
 
-    with subtest("Jellyfin sees the real client through Caddy"):
+    with subtest("network.xml has the settings the module manages"):
         conf = server.succeed("cat /var/lib/jellyfin/config/network.xml")
         assert "<InternalHttpPort>8097</InternalHttpPort>" in conf, conf
         assert "<string>127.0.0.1</string>" in conf, conf
+
+    with subtest("Jellyfin runs as its own user, and can use the shared library"):
+        pid = server.succeed("systemctl show -p MainPID --value jellyfin").strip()
+        out = server.succeed(f"ps -o user= -p {pid}").strip()
+        assert out == "jellyfin", out
+        groups = server.succeed(f"grep ^Groups /proc/{pid}/status")
+        gid = server.succeed("getent group media | cut -d: -f3").strip()
+        assert gid in groups.split(), groups
+        server.succeed("install -d -m 2775 -o root -g media /srv/library")
+        server.succeed("install -m 0640 -o root -g media /dev/null /srv/library/movie.mkv")
+        server.succeed("runuser -u jellyfin -- cat /srv/library/movie.mkv")
+        server.succeed("runuser -u jellyfin -- touch /srv/library/movie.nfo")
+        server.fail("runuser -u jellyfin -- cat /etc/shadow")
+
+    with subtest("data left by a previous user is taken over on start"):
+        server.succeed("systemctl stop jellyfin")
+        server.succeed("useradd oldowner")
+        server.succeed("chown -R oldowner:users /var/lib/jellyfin /var/cache/jellyfin")
+        server.succeed("systemctl start jellyfin")
+        server.wait_until_succeeds("curl -fsS --max-time 10 http://127.0.0.1:8097/System/Info/Public | grep -q ServerName", timeout=900)
+        assert server.succeed("find /var/lib/jellyfin /var/cache/jellyfin ! -user jellyfin | wc -l").strip() == "0"
+        assert server.succeed("find /var/lib/jellyfin /var/cache/jellyfin ! -group jellyfin | wc -l").strip() == "0"
   '';
 }
