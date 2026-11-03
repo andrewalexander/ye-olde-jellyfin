@@ -176,6 +176,22 @@ in
         server.succeed("fail2ban-client set jellyfin unbanip ${attacker}")
         attacker.wait_until_succeeds("curl -fsS --max-time 5 http://${server}:8096/System/Info/Public | grep -q ServerName", timeout=30)
 
+    with subtest("scanners get banned, while Jellyfin's own 404s don't count"):
+        server.succeed("fail2ban-client status caddy-probe", "fail2ban-client status caddy-404")
+        # Well past caddy-404's limit of 20, but under paths Jellyfin clients 404 on.
+        for i in range(25):
+            attacker.succeed(f"curl -sS --max-time 5 -o /dev/null http://${server}:8096/web/missing-{i}.js")
+        for path in ["/.env", "/.git/config"]:
+            attacker.succeed(f"curl -sS --max-time 5 -o /dev/null http://${server}:8096{path}")
+        server.wait_until_succeeds("fail2ban-client status caddy-probe | grep -q '${attacker}'", timeout=60)
+        # By now fail2ban has read past the 404s above.
+        out = server.succeed("fail2ban-client status caddy-404")
+        assert "${attacker}" not in out, out
+        attacker.fail("curl -sS --max-time 5 http://${server}:8096/System/Info/Public")
+        client.succeed("curl -fsS --max-time 10 http://${server}:8096/System/Info/Public | grep -q ServerName")
+        server.succeed("fail2ban-client set caddy-probe unbanip ${attacker}")
+        attacker.wait_until_succeeds("curl -fsS --max-time 5 http://${server}:8096/System/Info/Public | grep -q ServerName", timeout=30)
+
     with subtest("data left by a previous user is taken over on start"):
         server.succeed("systemctl stop jellyfin")
         server.succeed("useradd oldowner")

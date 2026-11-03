@@ -90,6 +90,41 @@ let
     }
   '';
 
+  # fail2ban filters over that log. Each line is one JSON object with
+  # request.client_ip (the real visitor; Caddy is the only proxy) before
+  # request.uri, and status after the request. Only the path is matched, not
+  # the query string, so a search term can't trip them.
+  #
+  # Paths no Jellyfin client ever asks for: dot-directories (.env, .git, .aws),
+  # server-side scripts and config files, admin panels, path traversal. These
+  # are what the scanners hitting the public site send, by the hundred.
+  probePaths = lib.concatStringsSep "|" [
+    ''/\.(?!well-known/)''
+    ''\.(?:php\d?|phtml|cgi|pl|aspx?|axd|jsp|action|env|ini|ya?ml|toml|tfstate|tfvars|hcl|sql|bak|old|sh|py|rb|cfg|conf|properties|secret|key|md)(?=[/"?]|$)''
+    ''wp-|phpmyadmin|cgi-bin|webmin|actuator|_profiler|server-status|telescope|@vite|/vendor/''
+    # fail2ban's config parser reads % as interpolation, so %% is one %.
+    ''%%2e|%%5c|\.\.''
+    ''/(?:etc|proc|root|var/task)/''
+  ];
+  probeRegex = ''"client_ip":"<HOST>",.*?"uri":"(?i:[^"?]*(?:${probePaths}))'';
+  # Any other 404, except under the paths where Jellyfin's own clients get them
+  # in normal use (a missing poster, a stale web-client file). A real client
+  # elsewhere rarely sees one; a scanner guessing paths sees hundreds.
+  notFoundRegex = ''"client_ip":"<HOST>",.*?"uri":"(?!/(?i:items|users|web|videos|audio|shows)/)[^"]*",.*"status":404\b'';
+
+  caddyJail = { failregex, maxretry, findtime, bantime }: {
+    filter.Definition = {
+      inherit failregex;
+      datepattern = ''"ts":{EPOCH}'';
+    };
+    settings = {
+      backend = "polling";
+      logpath = "/var/log/caddy/access.log";
+      port = "80,443,8096";
+      inherit maxretry findtime bantime;
+    };
+  };
+
   lanOnly = ''
     @notlan not remote_ip private_ranges
     abort @notlan
@@ -162,9 +197,17 @@ in
       #  - VPS passes TCP through (TLS stays end to end): read the PROXY header.
       #      servers { listener_wrappers { proxy_protocol { allow <vps-ip>/32 } tls } }
       #    and restrict the router's port forward to the VPS's address.
-      # globalConfig = ''
-      #   servers { ... }
-      # '';
+      #
+      # (add those inside the servers block below.)
+      #
+      # No HTTP/3: the router forwards TCP 443 only, so a UDP listener would
+      # only advertise something clients can't reach. Without it Caddy needs
+      # no CAP_NET_ADMIN (it only uses that for QUIC's UDP buffers).
+      globalConfig = ''
+        servers {
+          protocols h1 h2
+        }
+      '';
 
       virtualHosts = {
         # The port LAN apps (Roku) expect after discovery. Plain HTTP.
@@ -182,6 +225,32 @@ in
     };
     # Jellyfin has to let go of 8096 before Caddy can bind it.
     systemd.services.caddy.after = [ "jellyfin.service" ];
+    # Caddy is the one process the internet talks to. It needs to bind low
+    # ports, write its state and logs, and connect out (ACME, the upstreams);
+    # nothing else.
+    systemd.services.caddy.serviceConfig = {
+      AmbientCapabilities = lib.mkForce [ "CAP_NET_BIND_SERVICE" ];
+      CapabilityBoundingSet = [ "CAP_NET_BIND_SERVICE" ];
+      ProtectSystem = lib.mkForce "strict";
+      ProtectProc = "invisible";
+      ProcSubset = "pid";
+      ProtectKernelTunables = true;
+      ProtectKernelModules = true;
+      ProtectKernelLogs = true;
+      ProtectControlGroups = true;
+      ProtectClock = true;
+      ProtectHostname = true;
+      RestrictNamespaces = true;
+      RestrictRealtime = true;
+      RestrictSUIDSGID = true;
+      RemoveIPC = true;
+      LockPersonality = true;
+      MemoryDenyWriteExecute = true;
+      SystemCallArchitectures = "native";
+      SystemCallFilter = [ "@system-service" "~@privileged" ];
+      SystemCallErrorNumber = "EPERM";
+      RestrictAddressFamilies = [ "AF_INET" "AF_INET6" "AF_UNIX" "AF_NETLINK" ];
+    };
 
     services.dnscount.caddyLog.enable = true;
 
@@ -194,6 +263,27 @@ in
     services.fail2ban = {
       enable = true;
       ignoreIP = cfg.loginBanExempt;
+      # Each new ban of the same IP lasts twice as long as the last, up to a
+      # week, whichever jail it lands in.
+      bantime-increment = {
+        enable = true;
+        maxtime = "1w";
+        overalljails = true;
+      };
+      # Scanners: two probe paths in an hour is a day's ban. A burst of other
+      # 404s is an hour, since it's the looser of the two signals.
+      jails.caddy-probe = caddyJail {
+        failregex = probeRegex;
+        maxretry = 2;
+        findtime = "1h";
+        bantime = "1d";
+      };
+      jails.caddy-404 = caddyJail {
+        failregex = notFoundRegex;
+        maxretry = 20;
+        findtime = "10m";
+        bantime = "1h";
+      };
       jails.jellyfin = {
         filter.Definition.failregex = "Authentication request for .* has been denied \\(IP: <HOST>\\)";
         settings = {
@@ -204,6 +294,13 @@ in
           bantime = "1h";
         };
       };
+    };
+
+    # fail2ban won't start if a jail's log file is missing, and Caddy creates
+    # its access log when it loads its config.
+    systemd.services.fail2ban = {
+      after = [ "caddy.service" ];
+      wants = [ "caddy.service" ];
     };
 
     networking.firewall =
