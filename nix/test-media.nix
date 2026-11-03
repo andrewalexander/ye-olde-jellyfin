@@ -60,7 +60,7 @@ in
     };
     # A local certificate, since this test can't reach Let's Encrypt.
     services.caddy.virtualHosts."jellyfin.test".extraConfig = "tls internal";
-    environment.systemPackages = [ pkgs.curl pkgs.iproute2 pkgs.procps pkgs.util-linux pkgs.shadow pkgs.python3 ];
+    environment.systemPackages = [ pkgs.curl pkgs.iproute2 pkgs.procps pkgs.util-linux pkgs.shadow pkgs.python3 pkgs.jq ];
   };
 
   testScript = ''
@@ -191,6 +191,23 @@ in
         client.succeed("curl -fsS --max-time 10 http://${server}:8096/System/Info/Public | grep -q ServerName")
         server.succeed("fail2ban-client set caddy-probe unbanip ${attacker}")
         attacker.wait_until_succeeds("curl -fsS --max-time 5 http://${server}:8096/System/Info/Public | grep -q ServerName", timeout=30)
+
+    with subtest("dnscount records both bans from fail2ban's journal, and neither leaked"):
+        server.wait_for_unit("dnscount-fail2ban.service")
+        bans = "curl -fsS http://127.0.0.1:8081/api/bans?ip=${attacker}"
+        # Each ban paired with its unban, and the jail's ports carried over.
+        for jail in ["jellyfin", "caddy-probe"]:
+            server.wait_until_succeeds(
+                f"{bans} | jq -e 'map(select(.jail == \"{jail}\" and .unbanned_at != null and .ports == \"80,443,8096\")) | length == 1'",
+                timeout=60,
+            )
+        print(server.succeed("dnscount-admin report bans"))
+        server.succeed(f"{bans} | jq -e 'all(.hits_during == 0)'")
+        # Reading the whole journal again (as every restart does) adds nothing.
+        before = server.succeed("dnscount-admin report bans | wc -l")
+        server.succeed("systemctl restart dnscount-fail2ban.service")
+        server.sleep(5)
+        assert server.succeed("dnscount-admin report bans | wc -l") == before
 
     with subtest("data left by a previous user is taken over on start"):
         server.succeed("systemctl stop jellyfin")
