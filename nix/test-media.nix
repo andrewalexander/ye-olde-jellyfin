@@ -26,7 +26,7 @@ let
   '';
 
   clientTools = { pkgs, ... }: {
-    environment.systemPackages = [ pkgs.curl pkgs.python3 ];
+    environment.systemPackages = [ pkgs.curl pkgs.python3 pkgs.jq ];
     networking.firewall.enable = false;
     networking.hosts.${server} = [ "jellyfin.test" ];
   };
@@ -99,7 +99,7 @@ in
     with subtest("the HTTPS site is the only thing open to everyone"):
         code = outsider.succeed("curl -skS --max-time 10 -o /dev/null -w '%{http_code}' https://jellyfin.test/System/Info/Public")
         assert code == "200", code
-        for port in [8096, 8097, 9091, 9117, 8080, 8081]:
+        for port in [8096, 8097, 9091, 9117, 8080, 8081, 8082, 8090]:
             outsider.fail(f"curl -sS --max-time 5 http://${server}:{port}/")
 
     with subtest("Jellyfin itself isn't reachable from the LAN"):
@@ -208,6 +208,16 @@ in
         server.succeed("systemctl restart dnscount-fail2ban.service")
         server.sleep(5)
         assert server.succeed("dnscount-admin report bans | wc -l") == before
+
+    with subtest("the explorer is LAN-only, and joins the bans with what it knows"):
+        server.wait_for_unit("dnscount-explore.service")
+        client.wait_until_succeeds("curl -fsS --max-time 5 http://${server}:8082/ | grep -q 'dnscount explorer'", timeout=60)
+        csp = client.succeed("curl -fsS -o /dev/null -D - --max-time 5 http://${server}:8082/ | grep -i content-security-policy")
+        assert "default-src 'self'" in csp, csp
+        client.succeed("curl -fsS --max-time 10 'http://${server}:8082/api/bans?ip=${attacker}' | jq -e 'length == 2'")
+        client.succeed("curl -fsS --max-time 10 http://${server}:8082/api/ips | jq -e 'type == \"array\"'")
+        # The explorer itself only listens on localhost.
+        server.fail("ss -ltnH | awk '{print $4}' | grep -E ':8090$' | grep -v '^127.0.0.1:'")
 
     with subtest("data left by a previous user is taken over on start"):
         server.succeed("systemctl stop jellyfin")

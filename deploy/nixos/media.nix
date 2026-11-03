@@ -17,7 +17,9 @@ let
   jellyfinPort = 8097;
   jellyfin = "127.0.0.1:${toString jellyfinPort}";
   vpnUIs = "10.200.0.2"; # vpn-netns.nix nsSide
-  lanPorts = [ 8096 9091 9117 ];
+  lanPorts = [ 8096 9091 9117 explorerPort ];
+  # The dnscount explorer (table UI), LAN only like the torrent UIs.
+  explorerPort = 8082;
 
   strings = l: concatMapStrings (s: "<string>${s}</string>") l;
 
@@ -215,6 +217,8 @@ in
         # Torrent UIs: never on the public site.
         "http://:9091" = lanSite "${vpnUIs}:9091";
         "http://:9117" = lanSite "${vpnUIs}:9117";
+        # dnscount's table explorer: read-only, no password, never public.
+        "http://:${toString explorerPort}" = lanSite config.services.dnscount.explore.addr;
       } // lib.optionalAttrs (cfg.domain != null) {
         # Internet and LAN-by-name (split-horizon DNS points the name at this host).
         ${cfg.domain} = {
@@ -253,6 +257,7 @@ in
     };
 
     services.dnscount.caddyLog.enable = true;
+    services.dnscount.explore.enable = lib.mkDefault true;
 
     # Jellyfin's lockout disables the account, which lets a stranger lock you out
     # on purpose. This blocks the guesser instead, sooner than that lockout. The
