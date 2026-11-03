@@ -270,6 +270,10 @@ in
         maxtime = "1w";
         overalljails = true;
       };
+      # How long fail2ban remembers past bans. The 1-day default forgets a
+      # scanner before it usually comes back, so the doubling above would
+      # start over at the base ban each time.
+      daemonSettings.Definition.dbpurgeage = "30d";
       # Scanners: two probe paths in an hour is a day's ban. A burst of other
       # 404s is an hour, since it's the looser of the two signals.
       jails.caddy-probe = caddyJail {
