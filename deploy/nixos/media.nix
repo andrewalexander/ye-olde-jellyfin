@@ -262,6 +262,9 @@ in
     # public site's own name is never sent to them.
     services.dnscount.lookups.enable = lib.mkDefault true;
     services.dnscount.lookups.neverLookup = lib.optional (cfg.domain != null) cfg.domain;
+    # ABUSE_IPDB_KEY and CENSYS_TOKEN (mode 0640, root:dnscount). Until it
+    # exists, only InternetDB (no key) runs.
+    services.dnscount.lookups.keyFile = lib.mkDefault "/var/lib/dnscount/lookups.env";
 
     # Jellyfin's lockout disables the account, which lets a stranger lock you out
     # on purpose. This blocks the guesser instead, sooner than that lockout. The
