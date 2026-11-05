@@ -258,6 +258,10 @@ in
 
     services.dnscount.caddyLog.enable = true;
     services.dnscount.explore.enable = lib.mkDefault true;
+    # Outside services (InternetDB, AbuseIPDB hourly; Censys by hand). The
+    # public site's own name is never sent to them.
+    services.dnscount.lookups.enable = lib.mkDefault true;
+    services.dnscount.lookups.neverLookup = lib.optional (cfg.domain != null) cfg.domain;
 
     # Jellyfin's lockout disables the account, which lets a stranger lock you out
     # on purpose. This blocks the guesser instead, sooner than that lockout. The
