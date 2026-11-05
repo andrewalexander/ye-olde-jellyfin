@@ -1,4 +1,4 @@
-# VM test for deploy/nixos/vpn-netns.nix against a fake Mullvad server:
+# VM test for nix/vpn-netns.nix against a fake Mullvad server:
 #   nix build .#checks.x86_64-linux.vpn
 { pkgs, ... }:
 let
@@ -45,7 +45,7 @@ in
   };
 
   nodes.server = { pkgs, ... }: {
-    imports = [ ../deploy/nixos/vpn-netns.nix ];
+    imports = [ ../vpn-netns.nix ];
     virtualisation.memorySize = 2048;
     services.vpnNamespace = {
       address = [ "10.66.0.2/32" ];

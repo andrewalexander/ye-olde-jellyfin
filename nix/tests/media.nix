@@ -1,6 +1,6 @@
-# VM test for deploy/nixos/media.nix with dnscount's module:
+# VM test for nix/media.nix with ye-olde-monitoring's module:
 #   nix build .#checks.x86_64-linux.media
-{ pkgs, ... }:
+monitoring: { pkgs, ... }:
 let
   # The test framework numbers nodes on eth1 in name order.
   attacker = "192.168.1.1";
@@ -43,12 +43,11 @@ in
   nodes.outsider = clientTools;
 
   nodes.server = { pkgs, ... }: {
-    imports = [ ./module.nix ../deploy/nixos/media.nix ];
+    imports = [ monitoring.nixosModules.default ../media.nix ];
     virtualisation.memorySize = 2048;
     virtualisation.diskSize = 8192; # Jellyfin won't start with under 2G free
     services.dnscount = {
       enable = true;
-      package = pkgs.callPackage ./package.nix { };
     };
     # The outsider isn't allowed in, to test the firewall. The attacker is, but
     # isn't exempt from bans.
@@ -176,7 +175,7 @@ in
         server.succeed("fail2ban-client set jellyfin unbanip ${attacker}")
         attacker.wait_until_succeeds("curl -fsS --max-time 5 http://${server}:8096/System/Info/Public | grep -q ServerName", timeout=30)
 
-    with subtest("scanners get banned, while Jellyfin's own 404s don't count"):
+    with subtest("the guard knows Jellyfin's own 404s: they don't count, while probes still ban"):
         server.succeed("fail2ban-client status caddy-probe", "fail2ban-client status caddy-404")
         # Well past caddy-404's limit of 20, but under paths Jellyfin clients 404 on.
         for i in range(25):

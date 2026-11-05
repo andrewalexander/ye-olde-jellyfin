@@ -1,6 +1,6 @@
 # Jellyfin behind Caddy, with every request logged for dnscount, plus LAN-only
 # front doors for the Transmission/Jackett UIs in the vpn namespace
-# (vpn-netns.nix). Import alongside dnscount's module.
+# (vpn-netns.nix). Needs ye-olde-monitoring's module (services.dnscount).
 #
 # This module owns Jellyfin's network.xml and rewrites it on every start, so
 # change those settings here rather than in Dashboard -> Networking.
@@ -69,63 +69,10 @@ let
       ${pkgs.coreutils}/bin/install -m 0640 -o ${jf.user} -g ${jf.group} ${networkXml} ${jf.configDir}/network.xml
     '';
 
-  # The access log dnscount-caddy-log tails (the inside of Caddy's `log {}`;
-  # it replaces the module's default per-site log). Jellyfin clients put
-  # credentials in URLs and headers; strip them before they reach disk.
-  # dnscount redacts the same keys again on ingest.
-  accessLog = ''
-    output file /var/log/caddy/access.log {
-      mode 640
-    }
-    format filter {
-      request>uri query {
-        replace api_key REDACTED
-        replace ApiKey REDACTED
-        replace X-Emby-Token REDACTED
-        replace token REDACTED
-      }
-      request>headers>Referer regexp "(?i)(api_?key|token)=[^&#]*" "$1=REDACTED"
-      request>headers>X-Emby-Authorization delete
-      request>headers>X-Emby-Token delete
-      request>headers>X-Mediabrowser-Token delete
-      wrap json
-    }
-  '';
-
-  # fail2ban filters over that log. Each line is one JSON object with
-  # request.client_ip (the real visitor; Caddy is the only proxy) before
-  # request.uri, and status after the request. Only the path is matched, not
-  # the query string, so a search term can't trip them.
-  #
-  # Paths no Jellyfin client ever asks for: dot-directories (.env, .git, .aws),
-  # server-side scripts and config files, admin panels, path traversal. These
-  # are what the scanners hitting the public site send, by the hundred.
-  probePaths = lib.concatStringsSep "|" [
-    ''/\.(?!well-known/)''
-    ''\.(?:php\d?|phtml|cgi|pl|aspx?|axd|jsp|action|env|ini|ya?ml|toml|tfstate|tfvars|hcl|sql|bak|old|sh|py|rb|cfg|conf|properties|secret|key|md)(?=[/"?]|$)''
-    ''wp-|phpmyadmin|cgi-bin|webmin|actuator|_profiler|server-status|telescope|@vite|/vendor/''
-    # fail2ban's config parser reads % as interpolation, so %% is one %.
-    ''%%2e|%%5c|\.\.''
-    ''/(?:etc|proc|root|var/task)/''
-  ];
-  probeRegex = ''"client_ip":"<HOST>",.*?"uri":"(?i:[^"?]*(?:${probePaths}))'';
-  # Any other 404, except under the paths where Jellyfin's own clients get them
-  # in normal use (a missing poster, a stale web-client file). A real client
-  # elsewhere rarely sees one; a scanner guessing paths sees hundreds.
-  notFoundRegex = ''"client_ip":"<HOST>",.*?"uri":"(?!/(?i:items|users|web|videos|audio|shows)/)[^"]*",.*"status":404\b'';
-
-  caddyJail = { failregex, maxretry, findtime, bantime }: {
-    filter.Definition = {
-      inherit failregex;
-      datepattern = ''"ts":{EPOCH}'';
-    };
-    settings = {
-      backend = "polling";
-      logpath = "/var/log/caddy/access.log";
-      port = "80,443,8096";
-      inherit maxretry findtime bantime;
-    };
-  };
+  # The access log dnscount-caddy-log tails and the guard's jails read, with
+  # the credentials Jellyfin clients put in URLs and headers stripped. It
+  # replaces the Caddy module's default per-site log.
+  accessLog = config.services.dnscount.caddyLog.format;
 
   lanOnly = ''
     @notlan not remote_ip private_ranges
@@ -181,7 +128,7 @@ in
       enable = true;
       openFirewall = false; # the firewall rules below open only what's needed
     };
-    # The library is shared through this group (see docs/homelab.md).
+    # The library is shared through this group (see docs/runbook.md).
     users.groups.media = { };
     users.users.${config.services.jellyfin.user}.extraGroups = [ "media" ];
     # Runs as root, so it can also take back data left by a previous user.
@@ -266,41 +213,21 @@ in
     # exists, only InternetDB (no key) runs.
     services.dnscount.lookups.keyFile = lib.mkDefault "/var/lib/dnscount/lookups.env";
 
-    # Jellyfin's lockout disables the account, which lets a stranger lock you out
-    # on purpose. This blocks the guesser instead, sooner than that lockout. The
-    # IP in Jellyfin's log is the real visitor because Caddy is a known proxy.
-    #
-    # With an HTTP-proxy VPS in front, the firewall here only sees the VPS, so a
-    # ban would block everyone: move the ban to the VPS.
-    services.fail2ban = {
+    # Scanners and password guessers are banned at the firewall by
+    # ye-olde-monitoring's guard (fail2ban over Caddy's log), which also checks
+    # that each ban held.
+    services.dnscount.guard = {
       enable = true;
-      ignoreIP = cfg.loginBanExempt;
-      # Each new ban of the same IP lasts twice as long as the last, up to a
-      # week, whichever jail it lands in.
-      bantime-increment = {
-        enable = true;
-        maxtime = "1w";
-        overalljails = true;
-      };
-      # How long fail2ban remembers past bans. The 1-day default forgets a
-      # scanner before it usually comes back, so the doubling above would
-      # start over at the base ban each time.
-      daemonSettings.Definition.dbpurgeage = "30d";
-      # Scanners: two probe paths in an hour is a day's ban. A burst of other
-      # 404s is an hour, since it's the looser of the two signals.
-      jails.caddy-probe = caddyJail {
-        failregex = probeRegex;
-        maxretry = 2;
-        findtime = "1h";
-        bantime = "1d";
-      };
-      jails.caddy-404 = caddyJail {
-        failregex = notFoundRegex;
-        maxretry = 20;
-        findtime = "10m";
-        bantime = "1h";
-      };
-      jails.jellyfin = {
+      ports = "80,443,8096";
+      exempt = cfg.loginBanExempt;
+      # Where Jellyfin's own clients 404 in normal use (a missing poster, a
+      # stale web-client file), so those don't count as scanning.
+      notFoundIgnore = [ "items" "users" "web" "videos" "audio" "shows" ];
+      # Jellyfin's lockout disables the account, which lets a stranger lock you
+      # out on purpose. This blocks the guesser instead, sooner than that
+      # lockout. The IP in Jellyfin's log is the real visitor because Caddy is
+      # a known proxy.
+      extraJails.jellyfin = {
         filter.Definition.failregex = "Authentication request for .* has been denied \\(IP: <HOST>\\)";
         settings = {
           journalmatch = "_SYSTEMD_UNIT=jellyfin.service";
@@ -310,13 +237,6 @@ in
           bantime = "1h";
         };
       };
-    };
-
-    # fail2ban won't start if a jail's log file is missing, and Caddy creates
-    # its access log when it loads its config.
-    systemd.services.fail2ban = {
-      after = [ "caddy.service" ];
-      wants = [ "caddy.service" ];
     };
 
     networking.firewall =
