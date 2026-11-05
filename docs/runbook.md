@@ -20,7 +20,8 @@ The download namespace is optional and separate. Its section near the end can be
 | `<controller>`, `<server>`, `<router>` | SSH host aliases for A, B, C | `laptop`, `media-box`, `router` |
 | `<ssh-key>` | admin key file name in `~/.ssh` | `homelab` |
 | `<key-comment>` | that key's comment | `you@laptop` |
-| `<you>` | your login on B, and your GitHub user | `alice` |
+| `<you>` | your login on B | `alice` |
+| `<github-user>` | your GitHub user (its public keys) | `alice` |
 | `<B-IP>`, `<router-ip>` | B's fixed LAN address, the router's | `192.168.1.10`, `192.168.1.1` |
 | `<lan>` | your LAN networks | `192.168.1.0/24` |
 | `<media-dir>` | where the library lives | `/srv/media` |
@@ -41,7 +42,7 @@ ssh <you>@<B-IP> 'uname -m; nixos-version'
 1. **Add the key to GitHub.** Add `~/.ssh/<ssh-key>.pub` to the account, and note its fingerprint from `ssh-keygen -lf`.
 2. **Pull it once on each host and check the fingerprint.** This is a one-time copy, not a sync: anyone who got into the GitHub account could otherwise add a key to the router.
    ```sh
-   curl -fsS https://github.com/<you>.keys | tee /tmp/k | ssh-keygen -lf -   # must list the fingerprint above
+   curl -fsS https://github.com/<github-user>.keys | tee /tmp/k | ssh-keygen -lf -   # must list the fingerprint above
    ```
    - On C: `cat /tmp/k >> ~/.ssh/authorized_keys`. UniFi OS can drop this on firmware updates. If your firmware has SSH keys under Settings → System → Advanced, add the key there too.
    - On B: pin the key in config, then rebuild:
