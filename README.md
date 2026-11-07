@@ -2,9 +2,16 @@
 
 Run Jellyfin on the internet from a home server, and keep a close eye on what that lets in.
 
-Exposing anything at home means it gets scanned within minutes, and keeps getting scanned. So this stack doesn't just put Jellyfin behind Caddy. It watches every connection with [ye-olde-monitoring](https://github.com/andrewalexander/ye-olde-monitoring): every request, your network's DNS lookups, the router's IDS alerts, and fail2ban bans, each checked afterwards to confirm it held. It also gives you a LAN-only explorer to see all of it.
+"Just put jellyfin on the Internet" I say. But I know what the Internet is like. I wanted to know who was scanning me and needed to be able to take action if necessary. I couldn't.. so that quickly rabbit holed into.. this.
 
-Separately, and optionally, the same server can run **Transmission + Jackett confined to a Mullvad-only network namespace**. If the tunnel drops, they have no network at all, and Jellyfin keeps its normal uplink.
+A network monitoring stack that runs on an old laptop alongside the jellyfin server itself. Plus some bits to make it easy to have some applications bound to vpns while keeping the rest of the applications free to serve up websites to the local network. Some customizations/tweaks also came up along the way - quirks when running a server on a retired laptop. 
+
+After hacking something together, I decided to split some things for public consumption:
+- [ye-olde-monitoring](https://github.com/andrewalexander/ye-olde-monitoring) - to see all incoming requests, all outgoing DNS to the router, any alerts the router blocked, and any fail2ban actions we took against noisy scanners; with a table based UI to dive into the sqlite database storing it all behind the scenes. 
+- NixOS module for transmission + jackett, with kill switch
+- NixOS module for wifi hackery
+
+If enabled, Transmission and Jackett get confined to a VPN-only systemd network namespace with a kill switch. If the connection to vpn drops, they have no network at all, and Jellyfin keeps its normal uplink.
 
 NixOS modules:
 
