@@ -113,9 +113,9 @@ in
 
     with subtest("requests land in dnscount with the real client, and no tokens"):
         client.succeed("curl -sS --max-time 5 -o /dev/null 'http://${server}:8096/Items/1/Images?api_key=sekrit&maxWidth=300'")
-        server.wait_until_succeeds("curl -fsS 'http://127.0.0.1:8081/api/hits?ip=${client}' | grep -q 'api_key=REDACTED'", timeout=60)
+        server.wait_until_succeeds("curl -fsS 'http://127.0.0.1:8090/api/hits?ip=${client}' | grep -q 'api_key=REDACTED'", timeout=60)
         server.fail("grep -q sekrit /var/log/caddy/access.log")
-        out = server.succeed("curl -fsS 'http://127.0.0.1:8081/api/hits?limit=500'")
+        out = server.succeed("curl -fsS 'http://127.0.0.1:8090/api/hits?limit=500'")
         assert "sekrit" not in out, out
 
     with subtest("network.xml has the settings the module manages"):
@@ -193,7 +193,7 @@ in
 
     with subtest("dnscount records both bans from fail2ban's journal, and neither leaked"):
         server.wait_for_unit("dnscount-fail2ban.service")
-        bans = "curl -fsS http://127.0.0.1:8081/api/bans?ip=${attacker}"
+        bans = "curl -fsS http://127.0.0.1:8090/api/bans?ip=${attacker}"
         # Each ban paired with its unban, and the jail's ports carried over.
         for jail in ["jellyfin", "caddy-probe"]:
             server.wait_until_succeeds(
