@@ -1,0 +1,48 @@
+{
+  "nodes": {
+    "monitoring": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1794110575,
+        "narHash": "sha256-GLzw49K9sVP0cH0gl56OiERkQ3HUCRwmQkuRPdZNM80=",
+        "owner": "andrewalexander",
+        "repo": "ye-olde-monitoring",
+        "rev": "5f062bc428a1c48448b902c40e41f6f957530e0d",
+        "type": "github"
+      },
+      "original": {
+        "owner": "andrewalexander",
+        "repo": "ye-olde-monitoring",
+        "type": "github"
+      }
+    },
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1793876309,
+        "narHash": "sha256-Wojg9lIH/hDH91iDVH2/EPw8oDSpxjxhXONbU1yf4Zg=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "f9a75f41be3a74eab55d3a7679d34ad6cc0da977",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixos-unstable",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "root": {
+      "inputs": {
+        "monitoring": "monitoring",
+        "nixpkgs": "nixpkgs"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}
