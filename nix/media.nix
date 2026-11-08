@@ -74,8 +74,10 @@ let
   # replaces the Caddy module's default per-site log.
   accessLog = config.services.dnscount.caddyLog.format;
 
+  # The same networks the firewall lets in, so a source that's private but
+  # not listed (another VLAN, the vpn namespace) is turned away here too.
   lanOnly = ''
-    @notlan not remote_ip private_ranges
+    @notlan not remote_ip ${concatStringsSep " " cfg.lans}
     abort @notlan
   '';
   lanSite = upstream: {
@@ -88,7 +90,11 @@ in
     lans = mkOption {
       type = types.listOf types.str;
       example = [ "192.168.1.0/24" ];
-      description = "Networks allowed to reach Jellyfin, its discovery, and the torrent UIs.";
+      description = ''
+        Networks allowed to reach Jellyfin, its discovery, and the torrent UIs,
+        checked by both the firewall and Caddy. A tailnet goes here too
+        (100.64.0.0/10) to reach the LAN-only sites over it.
+      '';
     };
     serverAddress = mkOption {
       type = types.str;

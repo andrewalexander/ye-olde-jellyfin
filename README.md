@@ -37,7 +37,7 @@ inputs.jellyfin.url = "github:andrewalexander/ye-olde-jellyfin";
 
 - **Caddy fronts everything.** Jellyfin moves to 8097, which the firewall keeps closed, and Caddy takes 8096. LAN apps (Roku) find us through discovery (UDP 7359), which advertises Caddy's address (:8096). Means it is transparent to jellyfin clients but we get to sit in the middle
 - **`domain`** adds a TLS site and opens 80/443. It's only reachable from the internet once the router forwards 443.
-- **LAN-only front doors** on 8096 (Jellyfin), 8082 (the monitoring explorer), and 9091/9117 (the torrent UIs). The firewall only opens these to `lans`, and Caddy aborts non-private sources.
+- **LAN-only front doors** on 8096 (Jellyfin), 8082 (the monitoring explorer), and 9091/9117 (the torrent UIs). The firewall only opens these to `lans`, and Caddy aborts any source outside `lans`.
 - **Caddy writes the log** that monitoring reads. Credentials that Jellyfin clients put in URLs and headers are stripped before they reach disk.
 - **Jellyfin owns nothing it doesn't need.** It runs as its own user, shares the library through the `media` group, and can't reach the torrent UIs (`jellyfinDeny`). The module also owns `network.xml`, so make network changes in the module, not the dashboard.
 - **Caddy is sandboxed.** It gets no capabilities beyond binding low ports, a read-only system, and no HTTP/3 (the router only forwards TCP).
